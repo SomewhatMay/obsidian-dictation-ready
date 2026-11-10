@@ -8,6 +8,7 @@ const notices = [];
 class Plugin {
   constructor(app) { this.app = app; this.commands = []; this.events = []; }
   addCommand(c) { this.commands.push(c); }
+  addRibbonIcon(icon, title, cb) { (this.ribbon ??= []).push({ icon, title, cb }); }
   registerEvent(ref) { this.events.push(ref); }
 }
 class MarkdownView {}
@@ -103,6 +104,11 @@ test("mobile: command shape", () => {
   const plugin = load(makeApp(), false);
   assert.deepEqual(plugin.commands.map((c) => c.id), ["mark-ready-and-sync", "new-dictation-note"]);
   for (const c of plugin.commands) assert.ok(c.icon && typeof c.callback === "function" && !c.checkCallback);
+  assert.deepEqual(plugin.ribbon.map((r) => r.title), ["Mark ready & sync", "New dictation note"]);
+  plugin.markReady = mock.fn(); plugin.newNote = mock.fn();
+  plugin.ribbon.forEach((r) => r.cb());
+  assert.equal(plugin.markReady.mock.callCount(), 1);
+  assert.equal(plugin.newNote.mock.callCount(), 1);
 });
 
 const rootFile = { path: "x.md", basename: "x", parent: { path: "/" } };

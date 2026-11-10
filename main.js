@@ -18,6 +18,9 @@ module.exports = class DictationReadyPlugin extends Plugin {
       icon: "mic",
       callback: () => this.newNote(),
     });
+    // Ribbon icons: on mobile these appear in the ribbon menu / quick-access slot.
+    this.addRibbonIcon("send", "Mark ready & sync", () => this.markReady());
+    this.addRibbonIcon("mic", "New dictation note", () => this.newNote());
 
     if (Platform.isDesktopApp) {
       // Before layout-ready, events fire for every file as the vault loads.
