@@ -27,9 +27,13 @@ function makeApp({ gvs = makeGvs(), file } = {}) {
   const fm = {};
   const app = {
     fm, view, calls: [],
-    vault: {
+    metadataCache: {
       on(name, cb) { (handlers[name] ||= []).push(cb); return { name, cb }; },
-      trigger(name, p) { (handlers[name] || []).forEach((cb) => cb({ path: p })); },
+      // Fires "changed" for a file at path p whose parsed frontmatter has the given status.
+      change(p, status) {
+        const cache = { frontmatter: { status } };
+        (handlers.changed || []).forEach((cb) => cb({ ...dictFile(p), extension: path.extname(p).slice(1) }, "", cache));
+      },
     },
     workspace: {
       onLayoutReady(cb) { layoutCb = cb; },
@@ -163,33 +167,36 @@ test("mobile: does not register desktop listeners", () => {
 });
 
 // --- desktop ---
-test("desktop: create+modify in Completed/ -> one silent sync ~2 s later", async () => {
-  const gvs = makeGvs();
-  const app = makeApp({ gvs });
-  const plugin = load(app, true);
-  app.workspace.layoutReady();
-  assert.equal(plugin.events.length, 2);
-  app.vault.trigger("create", "Dictation/Completed/x.md");
-  await advance(500);
-  app.vault.trigger("modify", "Dictation/Completed/x.md");
-  await advance(1900);
-  assert.deepEqual(gvs.args, []);
-  await advance(200);
-  assert.deepEqual(gvs.args, [true]);
-  await advance(5000);
-  assert.deepEqual(gvs.args, [true]);
-  assert.deepEqual(notices, []);
-});
+for (const status of ["done", "failed"]) {
+  test(`desktop: ${status} note in Dictation/ -> one silent sync ~2 s later`, async () => {
+    const gvs = makeGvs();
+    const app = makeApp({ gvs });
+    const plugin = load(app, true);
+    app.workspace.layoutReady();
+    assert.equal(plugin.events.length, 1);
+    app.metadataCache.change("Dictation/x.md", status);
+    await advance(500);
+    app.metadataCache.change("Dictation/x.md", status);
+    await advance(1900);
+    assert.deepEqual(gvs.args, []);
+    await advance(200);
+    assert.deepEqual(gvs.args, [true]);
+    await advance(5000);
+    assert.deepEqual(gvs.args, [true]);
+    assert.deepEqual(notices, []);
+  });
+}
 
-test("desktop: ignores events before layout-ready and outside Completed/", async () => {
+test("desktop: ignores other statuses, other folders and events before layout-ready", async () => {
   const gvs = makeGvs();
   const app = makeApp({ gvs });
   load(app, true);
-  app.vault.trigger("create", "Dictation/Completed/early.md");
+  app.metadataCache.change("Dictation/early.md", "done");
   app.workspace.layoutReady();
-  app.vault.trigger("create", "Dictation/x.md");
-  app.vault.trigger("modify", "Notes/y.md");
-  app.vault.trigger("create", "Dictation/CompletedX.md");
+  for (const status of ["ready", "processing", "drafting", undefined]) app.metadataCache.change("Dictation/x.md", status);
+  app.metadataCache.change("Dictation/Completed/x.md", "done");
+  app.metadataCache.change("Notes/y.md", "done");
+  app.metadataCache.change("Dictation/x.canvas", "done");
   await advance(5000);
   assert.deepEqual(gvs.args, []);
 });
@@ -199,7 +206,7 @@ test("desktop: waits while syncing", async () => {
   const app = makeApp({ gvs });
   load(app, true);
   app.workspace.layoutReady();
-  app.vault.trigger("create", "Dictation/Completed/x.md");
+  app.metadataCache.change("Dictation/x.md", "done");
   await advance(6000);
   assert.deepEqual(gvs.args, []);
   gvs.syncing = false;
@@ -212,7 +219,7 @@ test("desktop: unload clears the pending timer", async () => {
   const app = makeApp({ gvs });
   const plugin = load(app, true);
   app.workspace.layoutReady();
-  app.vault.trigger("create", "Dictation/Completed/x.md");
+  app.metadataCache.change("Dictation/x.md", "done");
   plugin.onunload();
   await advance(5000);
   assert.deepEqual(gvs.args, []);

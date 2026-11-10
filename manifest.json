@@ -1,7 +1,7 @@
 {
   "id": "dictation-ready",
   "name": "Dictation Ready",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.4.0",
   "description": "Mark a dictation note ready and sync it with Git Vault Sync; on desktop, push finished notes immediately.",
   "author": "SomewhatMay",

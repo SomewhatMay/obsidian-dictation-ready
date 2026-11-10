@@ -1,6 +1,5 @@
 const { Plugin, MarkdownView, Notice, Platform } = require("obsidian");
 
-const COMPLETED = "Dictation/Completed/";
 const FALLBACK = "Marked ready; will sync on next auto-sync";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,13 +14,15 @@ module.exports = class DictationReadyPlugin extends Plugin {
     });
 
     if (Platform.isDesktopApp) {
-      // Before layout-ready, "create" fires for every file as the vault loads.
+      // Before layout-ready, events fire for every file as the vault loads.
       this.app.workspace.onLayoutReady(() => {
-        const onChange = (file) => {
-          if (file.path.startsWith(COMPLETED)) this.schedulePush();
-        };
-        this.registerEvent(this.app.vault.on("create", onChange));
-        this.registerEvent(this.app.vault.on("modify", onChange));
+        // "changed" fires after parsing (so status is current), also for files changed outside Obsidian.
+        this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
+          const status = cache?.frontmatter?.status;
+          if (file.parent?.path === "Dictation" && file.extension === "md" && (status === "done" || status === "failed")) {
+            this.schedulePush();
+          }
+        }));
       });
     }
   }
@@ -52,7 +53,7 @@ module.exports = class DictationReadyPlugin extends Plugin {
     }
   }
 
-  // Desktop: one sync 2 s after the last Completed/ change, silently.
+  // Desktop: one sync 2 s after the last done/failed Dictation/ note change, silently.
   schedulePush() {
     clearTimeout(this.timer);
     this.timer = setTimeout(async () => {
