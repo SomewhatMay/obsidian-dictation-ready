@@ -1,5 +1,6 @@
 const { Plugin, MarkdownView, Notice, Platform } = require("obsidian");
 
+const INBOX = "00 Inbox"; // shared with other notes; dictation notes carry `dictation: true`
 const FALLBACK = "Marked ready; will sync on next auto-sync";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -27,8 +28,9 @@ module.exports = class DictationReadyPlugin extends Plugin {
       this.app.workspace.onLayoutReady(() => {
         // "changed" fires after parsing (so status is current), also for files changed outside Obsidian.
         this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
-          const status = cache?.frontmatter?.status;
-          if (file.parent?.path === "Dictation" && file.extension === "md" && (status === "done" || status === "failed")) {
+          const fm = cache?.frontmatter;
+          if (file.parent?.path === INBOX && file.extension === "md" && String(fm?.dictation).toLowerCase() === "true"
+            && (fm.status === "done" || fm.status === "failed")) {
             this.schedulePush();
           }
         }));
@@ -44,13 +46,14 @@ module.exports = class DictationReadyPlugin extends Plugin {
     try {
       const view = this.app.workspace.getActiveViewOfType(MarkdownView);
       const file = view?.file;
-      if (!file || file.parent?.path !== "Dictation") {
-        new Notice("Dictation Ready: open a note in Dictation/ first");
+      if (!file || file.parent?.path !== INBOX) {
+        new Notice(`Dictation Ready: open a note in ${INBOX}/ first`);
         return;
       }
       await view.save();
       await this.app.fileManager.processFrontMatter(file, (fm) => {
         fm.status = "ready";
+        fm.dictation = true;
       });
       await sleep(400); // inferred settle time after the disk write; tune on device
       const result = await this.waitAndSync(false);
@@ -62,17 +65,18 @@ module.exports = class DictationReadyPlugin extends Plugin {
     }
   }
 
-  // Creates Dictation/<YYYYMMDDHHmm>.md (-2, -3… on collision) and opens it.
+  // Creates 00 Inbox/<YYYYMMDDHHmm>.md (-2, -3… on collision) and opens it.
   async newNote() {
     try {
       const { vault, workspace } = this.app;
       const now = window.moment();
-      if (!vault.getAbstractFileByPath("Dictation")) await vault.createFolder("Dictation");
-      const base = `Dictation/${now.format("YYYYMMDDHHmm")}`;
+      if (!vault.getAbstractFileByPath(INBOX)) await vault.createFolder(INBOX);
+      const base = `${INBOX}/${now.format("YYYYMMDDHHmm")}`;
       let p = `${base}.md`;
       for (let n = 2; vault.getAbstractFileByPath(p); n++) p = `${base}-${n}.md`;
       const file = await vault.create(p, `---
 status: drafting
+dictation: true
 created: "${now.format("YYYY-MM-DD HH:mm")}"
 ---
 
@@ -83,7 +87,7 @@ created: "${now.format("YYYY-MM-DD HH:mm")}"
     }
   }
 
-  // Desktop: one sync 2 s after the last done/failed Dictation/ note change, silently.
+  // Desktop: one sync 2 s after the last done/failed dictation note change in the inbox, silently.
   schedulePush() {
     clearTimeout(this.timer);
     this.timer = setTimeout(async () => {

@@ -23,7 +23,7 @@ const fmt = { YYYYMMDDHHmm: "202611091230", "YYYY-MM-DD HH:mm": "2026-11-09 12:3
 globalThis.window = { moment: () => ({ format: (f) => fmt[f] }) };
 
 // --- fakes ---
-function makeApp({ gvs = makeGvs(), file, files = ["Dictation"] } = {}) {
+function makeApp({ gvs = makeGvs(), file, files = ["00 Inbox"] } = {}) {
   const handlers = {};
   let layoutCb = null;
   const view = Object.assign(new MarkdownView(), { file, saved: 0, save: async () => { view.saved++; } });
@@ -32,9 +32,9 @@ function makeApp({ gvs = makeGvs(), file, files = ["Dictation"] } = {}) {
     fm, view, calls: [],
     metadataCache: {
       on(name, cb) { (handlers[name] ||= []).push(cb); return { name, cb }; },
-      // Fires "changed" for a file at path p whose parsed frontmatter has the given status.
-      change(p, status) {
-        const cache = { frontmatter: { status } };
+      // Fires "changed" for a file at path p whose parsed frontmatter has the given status and marker.
+      change(p, status, extra = { dictation: true }) {
+        const cache = { frontmatter: { status, ...extra } };
         (handlers.changed || []).forEach((cb) => cb({ ...dictFile(p), extension: path.extname(p).slice(1) }, "", cache));
       },
     },
@@ -81,7 +81,7 @@ function makeGvs(outcomes = []) {
   };
   return gvs;
 }
-const dictFile = (p = "Dictation/2026-11-09 1200.md") => ({
+const dictFile = (p = "00 Inbox/2026-11-09 1200.md") => ({
   path: p, basename: path.basename(p, ".md"), parent: { path: path.dirname(p) },
 });
 const flush = () => new Promise((r) => setImmediate(r));
@@ -113,7 +113,7 @@ test("mobile: command shape", () => {
 
 const rootFile = { path: "x.md", basename: "x", parent: { path: "/" } };
 for (const [label, file] of [["vault root", rootFile], ["Notes/x.md", dictFile("Notes/x.md")],
-  ["Dictation/sub/x.md", dictFile("Dictation/sub/x.md")], ["Dictation/Completed/x.md", dictFile("Dictation/Completed/x.md")],
+  ["old Dictation/x.md", dictFile("Dictation/x.md")], ["00 Inbox/sub/x.md", dictFile("00 Inbox/sub/x.md")], ["00 Inbox/Completed/x.md", dictFile("00 Inbox/Completed/x.md")],
   ["no active file", undefined]]) {
   test(`mobile: mark ready on ${label} -> notice only`, async () => {
     const gvs = makeGvs();
@@ -125,18 +125,18 @@ for (const [label, file] of [["vault root", rootFile], ["Notes/x.md", dictFile("
     assert.deepEqual(app.calls, []); // no processFrontMatter, no executeCommandById
     assert.deepEqual(gvs.args, []);
     assert.equal(notices.length, 1);
-    assert.match(notices[0], /Dictation\//);
+    assert.equal(notices[0], "Dictation Ready: open a note in 00 Inbox/ first");
   });
 }
 
-test("mobile: save -> status ready -> sync once", async () => {
+test("mobile: save -> status ready + dictation marker -> sync once", async () => {
   const gvs = makeGvs();
   const app = makeApp({ gvs, file: dictFile() });
   const run = load(app, false).markReady();
   await advance(400);
   await run;
   assert.equal(app.view.saved, 1);
-  assert.equal(app.fm.status, "ready");
+  assert.deepEqual(app.fm, { status: "ready", dictation: true });
   assert.deepEqual(gvs.args, [true]);
   assert.deepEqual(notices, ["Ready: 2026-11-09 1200 — synced"]);
 });
@@ -272,25 +272,25 @@ test("mobile: conflict raised by sync() -> conflict notice, no retry", async () 
 });
 
 // --- new note ---
-test("new note: creates Dictation/<stamp>.md with frontmatter and opens it", async () => {
+test("new note: creates 00 Inbox/<stamp>.md with frontmatter and opens it", async () => {
   const app = makeApp();
   await load(app, false).newNote();
-  assert.equal(app.vault.files.get("Dictation/202611091230.md"), '---\nstatus: drafting\ncreated: "2026-11-09 12:30"\n---\n\n');
-  assert.deepEqual(app.calls, [["open", false, "Dictation/202611091230.md"]]);
+  assert.equal(app.vault.files.get("00 Inbox/202611091230.md"), '---\nstatus: drafting\ndictation: true\ncreated: "2026-11-09 12:30"\n---\n\n');
+  assert.deepEqual(app.calls, [["open", false, "00 Inbox/202611091230.md"]]);
   assert.deepEqual(notices, []);
 });
 
 test("new note: name collisions get -2, -3", async () => {
-  const app = makeApp({ files: ["Dictation", "Dictation/202611091230.md", "Dictation/202611091230-2.md"] });
+  const app = makeApp({ files: ["00 Inbox", "00 Inbox/202611091230.md", "00 Inbox/202611091230-2.md"] });
   await load(app, false).newNote();
-  assert.ok(app.vault.files.has("Dictation/202611091230-3.md"));
-  assert.deepEqual(app.calls, [["open", false, "Dictation/202611091230-3.md"]]);
+  assert.ok(app.vault.files.has("00 Inbox/202611091230-3.md"));
+  assert.deepEqual(app.calls, [["open", false, "00 Inbox/202611091230-3.md"]]);
 });
 
-test("new note: creates Dictation/ when missing", async () => {
+test("new note: creates 00 Inbox/ when missing", async () => {
   const app = makeApp({ files: [] });
   await load(app, false).newNote();
-  assert.deepEqual(app.calls, [["mkdir", "Dictation"], ["open", false, "Dictation/202611091230.md"]]);
+  assert.deepEqual(app.calls, [["mkdir", "00 Inbox"], ["open", false, "00 Inbox/202611091230.md"]]);
 });
 
 test("mobile: does not register desktop listeners", () => {
@@ -302,15 +302,15 @@ test("mobile: does not register desktop listeners", () => {
 
 // --- desktop ---
 for (const status of ["done", "failed"]) {
-  test(`desktop: ${status} note in Dictation/ -> one silent sync ~2 s later`, async () => {
+  test(`desktop: ${status} note in 00 Inbox/ -> one silent sync ~2 s later`, async () => {
     const gvs = makeGvs();
     const app = makeApp({ gvs });
     const plugin = load(app, true);
     app.workspace.layoutReady();
     assert.equal(plugin.events.length, 1);
-    app.metadataCache.change("Dictation/x.md", status);
+    app.metadataCache.change("00 Inbox/x.md", status, { dictation: "true" }); // quoted marker counts too
     await advance(500);
-    app.metadataCache.change("Dictation/x.md", status);
+    app.metadataCache.change("00 Inbox/x.md", status);
     await advance(1900);
     assert.deepEqual(gvs.args, []);
     await advance(200);
@@ -321,16 +321,18 @@ for (const status of ["done", "failed"]) {
   });
 }
 
-test("desktop: ignores other statuses, other folders and events before layout-ready", async () => {
+test("desktop: ignores other statuses, unmarked notes, other folders and events before layout-ready", async () => {
   const gvs = makeGvs();
   const app = makeApp({ gvs });
   load(app, true);
-  app.metadataCache.change("Dictation/early.md", "done");
+  app.metadataCache.change("00 Inbox/early.md", "done");
   app.workspace.layoutReady();
-  for (const status of ["ready", "processing", "drafting", undefined]) app.metadataCache.change("Dictation/x.md", status);
-  app.metadataCache.change("Dictation/Completed/x.md", "done");
+  for (const status of ["ready", "processing", "drafting", undefined]) app.metadataCache.change("00 Inbox/x.md", status);
+  for (const extra of [{}, { dictation: false }, { dictation: "false" }]) app.metadataCache.change("00 Inbox/mine.md", "done", extra);
+  app.metadataCache.change("00 Inbox/Completed/x.md", "done");
+  app.metadataCache.change("Dictation/x.md", "done");
   app.metadataCache.change("Notes/y.md", "done");
-  app.metadataCache.change("Dictation/x.canvas", "done");
+  app.metadataCache.change("00 Inbox/x.canvas", "done");
   await advance(5000);
   assert.deepEqual(gvs.args, []);
 });
@@ -340,7 +342,7 @@ test("desktop: waits while syncing", async () => {
   const app = makeApp({ gvs });
   load(app, true);
   app.workspace.layoutReady();
-  app.metadataCache.change("Dictation/x.md", "done");
+  app.metadataCache.change("00 Inbox/x.md", "done");
   await advance(6000);
   assert.deepEqual(gvs.args, []);
   gvs.syncing = false;
@@ -354,7 +356,7 @@ test("desktop: retry is silent (console only)", async () => {
   load(app, true);
   app.workspace.layoutReady();
   const log = mock.method(console, "log", () => {});
-  app.metadataCache.change("Dictation/x.md", "done");
+  app.metadataCache.change("00 Inbox/x.md", "done");
   await advance(2000 + 3 * 5000);
   log.mock.restore();
   assert.deepEqual(gvs.args, [true, true, true]);
@@ -367,7 +369,7 @@ test("desktop: unload clears the pending timer", async () => {
   const app = makeApp({ gvs });
   const plugin = load(app, true);
   app.workspace.layoutReady();
-  app.metadataCache.change("Dictation/x.md", "done");
+  app.metadataCache.change("00 Inbox/x.md", "done");
   plugin.onunload();
   await advance(5000);
   assert.deepEqual(gvs.args, []);
